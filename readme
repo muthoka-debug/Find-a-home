@@ -1,0 +1,296 @@
+# FindAHome 🇰🇪
+
+**Trusted Real Estate Platform for the Kenyan Market.**
+
+FindAHome solves the "fake listing" problem in Kenya by creating a verified marketplace for rentals. We focus on transparency, providing critical details like water availability (borehole), internet (fiber), and commute distances.
+
+## Tech Stack (Hybrid)
+- **Backend**: Django + Django REST Framework (Python).
+  - *Why?* Powerful Admin interface for manual verification of agents and listings.
+- **Frontend**: Next.js (React) + Tailwind CSS.
+  - *Why?* Fast, mobile-first experience for house hunters.
+- **Database**: SQLite (Dev) / PostgreSQL (Prod).
+
+## Key Features
+- **🛡️ Verified Listings**: Every listing is manually verified to prevent scams.
+- **💧 Utilities Transparency**: Explicit tags for "Borehole Water", "Council Water", and "Backup Power".
+- **⚡ Fiber Ready**: Filter homes by internet provider availability (Safaricom/Zuku).
+- **🚌 Commute Info**: "Distance to Main Road/Stage" for public transport users.
+- **💬 Direct Connect**: One-click "Chat on WhatsApp" with verified agents.
+
+## Project Structure
+├── backend/ # Django Project
+│ ├── findahome_backend/ # Settings & Config
+│ └── listings/ # Core App (Models for Property, Agent)
+├── frontend/ # Next.js Project
+│ ├── app/ # Pages & Layouts
+│ └── components/ # UI Components (PropertyCard, Filters)
+└── README.md
+
+## Build First, Monetize Later
+
+We will launch with user value first (trusted listings, fast search, verification) and keep monetization paths open behind the scenes.
+
+### MVP Scope (Phase 1)
+- Public property browsing with county, price, and amenities filters.
+- Agent and landlord onboarding with admin verification workflow.
+- **Authentication**: Email/Password signup + **Google Social Login** for fast onboarding.
+- Property management dashboard for verified agents.
+- WhatsApp contact flow for fast inquiry conversion.
+- Fraud reporting and listing moderation queue.
+- **Recommended for You** feed using location, design style, and interior preferences.
+- **FindAHome Chatbot** for guided search, FAQs, and support routing.
+
+### Architecture Decisions That Keep Monetization Open
+- **Multi-role accounts now**: `house_hunter`, `agent`, `landlord`, `admin`.
+- **Organization model now**: agents/landlords can later upgrade to paid tiers without changing identity tables.
+- **Feature flags now**: gate premium capabilities without rewiring frontend routes.
+- **Event logging now**: store actions (`listing_created`, `lead_sent`, `listing_boost_click`) to support future billing and analytics.
+- **Soft limits now**: enforce free-tier caps via config so paid limits can be activated later.
+
+### Data Model Additions To Include From Day 1 (Not Yet Charged)
+- `organizations` (owner, name, verification status)
+- `organization_members` (roles and permissions)
+- `plans` (free/pro/business definitions)
+- `organization_plan_state` (active plan, quotas, renewal metadata)
+- `usage_events` (meterable actions per organization)
+
+### Personalization Data Model (For Recommendations)
+- `user_preference_profile` (preferred counties, budget bands, bedrooms, furnishing, style tags)
+- `listing_style_tags` (design and interior tags such as `modern`, `minimal`, `open_kitchen`, `scandinavian`)
+- `listing_view_events` (user, listing, county, viewed_at, dwell_time)
+- `listing_save_events` (saved/shortlisted listings)
+- `recommendation_impressions` (what was recommended, rank, clicked/not clicked)
+
+These tables can stay on `free` for all users until monetization is enabled.
+
+## Recommended for You (Kenya-Focused)
+
+### Goal
+Show each user homes they are most likely to like based on:
+- **Location intent**: county and nearby areas they repeatedly browse.
+- **Most visited house designs**: bungalow, maisonette, apartment, studio, bedsitter, etc.
+- **Interior preferences**: style tags and features like open kitchen, tiled floors, modern finish, furnished.
+
+### Ranking Strategy (Simple First, Better Over Time)
+Use a weighted score per listing:
+
+$$
+Score = 0.45(LocationMatch) + 0.30(DesignAffinity) + 0.20(InteriorAffinity) + 0.05(Freshness)
+$$
+
+- `LocationMatch`: same county or nearby county boost.
+- `DesignAffinity`: based on house types the user views/saves most.
+- `InteriorAffinity`: based on style tags from viewed/saved listings.
+- `Freshness`: favor recently verified listings.
+
+### Budget-Friendly Implementation
+- Start with nightly batch recommendations (no expensive real-time ML).
+- Use PostgreSQL queries/materialized views for affinity scores.
+- Cache top recommendations per user for fast mobile loading.
+- Fall back to "popular in your county" if user history is limited.
+
+### Cold Start Rules
+- New users: ask 3 quick picks (county, budget range, preferred home type).
+- No interactions yet: show trending verified listings by county.
+- Sparse counties: blend nearby county inventory to avoid empty feeds.
+
+### Success Metrics
+- Recommendation click-through rate (CTR).
+- Save/shortlist rate from recommended cards.
+- Inquiry conversion rate from recommendations.
+- Time-to-first-inquiry after signup.
+
+## Scalability Baseline (Budget Friendly)
+- Keep backend stateless so horizontal scaling is easy.
+- Use PostgreSQL indexes for `county`, `price`, `status`, and `verified`.
+- Store images in object storage/CDN, not in app server disk.
+- Add pagination and cached filter results for high-traffic counties.
+- Use background workers only for heavy jobs (image optimization, alerts).
+
+## Kenya-First Product Guardrails
+- Mobile-first UI and low-data image strategy.
+- County-centric search and filtering across all 47 counties.
+- English and Kiswahili content support.
+- Verification-first trust model for agents and listings.
+- Keep payments optional in MVP; integrate M-Pesa when monetization starts.
+
+## Roles, Permissions, and UI Access
+
+Use **RBAC** (Role-Based Access Control) with object-level checks.
+
+### Roles
+- `admin`: full system visibility and control.
+- `landlord`: manages and views only data tied to own listings.
+- `agent`: manages and views only data tied to own listings (or assigned organization listings).
+- `house_hunter`: browse/search/save/inquire only; no listing management access.
+
+### Permission Boundaries
+- `admin`
+  - Can view and manage all users, listings, reports, verification queues, and analytics.
+- `landlord`
+  - Can create/edit/archive own listings.
+  - Can view inquiries, saves, performance stats, and reports for own listings only.
+  - Cannot access other landlords'/agents' listing data.
+- `agent`
+  - Same scope as landlord, but for assigned listings/organization.
+  - Cannot access listings outside assignment scope.
+- `house_hunter`
+  - Can view public verified listings, recommended feed, and own profile/saved items/inquiries.
+  - Cannot access management dashboards, moderation, or internal analytics.
+
+### Do Agent and Landlord Need Separate UI?
+Not necessarily separate apps. Use **one app with role-specific dashboards**:
+- Shared shell/navigation.
+- Different menu items and pages by role.
+- Reuse listing management components for both agent and landlord.
+
+This is cheaper, faster, and easier to maintain than building separate UIs.
+
+### Recommended UI Structure
+- `/admin/*` for admin tools (moderation, verification, user management).
+- `/dashboard/*` for landlord and agent tools.
+- `/app/*` (or public routes) for house hunters.
+
+The route guard decides access by role and ownership.
+
+### Backend Enforcement (Critical)
+Hide/show UI is not security. Enforce permissions on API too:
+- Role checks at endpoint level.
+- Object-level ownership checks at query level.
+- Return `403` for unauthorized access attempts.
+
+### Ownership Rules (Examples)
+- Listing update allowed only if:
+  - user is `admin`, or
+  - user is `landlord` and `listing.owner_id == user.id`, or
+  - user is `agent` and listing belongs to user organization/assignment.
+
+### Audit and Safety
+- Log sensitive actions (`listing_updated`, `status_changed`, `verification_approved`).
+- Soft delete important entities where needed.
+- Keep immutable verification history for trust and dispute resolution.
+
+## Chatbot Plan (Build Now, Expand Later)
+
+### What the Chatbot Should Do in MVP
+- Help house hunters find listings faster using natural language:
+  - Example: "2-bedroom in Nairobi under 35k with borehole and fiber"
+- Answer common questions (verification process, how to contact agent, reporting fake listings).
+- Guide users to key actions (save listing, contact on WhatsApp, set alert).
+- Route account/support issues to human support when needed.
+
+### Role-Aware Chatbot Behavior
+- `house_hunter`: search assistant, listing guidance, saved-items help, trust/safety help.
+- `agent` and `landlord`: listing management help, verification status help, dashboard how-to.
+- `admin`: moderation workflow helper and quick access to admin actions.
+
+The chatbot should respect the same RBAC rules as the UI and API. It must never reveal private data outside role scope.
+
+### Budget-Friendly Architecture
+- Phase 1: retrieval + rules-based assistant (lowest cost).
+  - FAQ knowledge base from product policies/help articles.
+  - Structured search query parser for listing intents (county, budget, bedrooms, features).
+- Phase 2: add LLM for richer conversation once usage grows.
+- Cache repeated FAQ responses and top intent results.
+- Add strict token and request limits per user/session.
+
+### Chatbot Data and Logging
+- `chat_sessions` (user, role, started_at, channel)
+- `chat_messages` (session, sender, intent, text, response_time_ms)
+- `chat_intent_events` (parsed intent fields: county, budget, bedrooms, amenities)
+- `chat_handoff_events` (escalated_to_human, reason)
+
+### Safety and Quality Controls
+- Do not provide legal/financial guarantees.
+- Always mark uncertain answers and suggest verified listing details.
+- Add abuse filters and rate limits.
+- Log unresolved intents to improve the knowledge base weekly.
+
+### Kenya-Focused Chatbot Intents
+- Rent and location queries by county/sub-location.
+- Utility-focused filters (borehole, fiber provider, backup power).
+- Commute-focused guidance (distance to stage/main road).
+- Language support: English first, Kiswahili follow-up.
+
+## 6-Week Build Plan
+### Week 1
+- Setup Django project, custom user model, auth, and roles.
+- Implement Google OAuth (social login) and JWT token flow.
+- Setup Next.js app shell and shared UI primitives.
+
+### Week 2
+- Implement listing CRUD, media upload, and property attributes.
+- Build admin verification flows and moderation statuses.
+
+### Week 3
+- Build search/filter API and frontend results pages.
+- Add county and amenity filters (water, fiber, backup power).
+- Capture view/save events needed for recommendation signals.
+
+### Week 4
+- Add agent dashboard, listing performance basics, and WhatsApp inquiry actions.
+- Add report listing flow and moderation queue.
+- Build Recommended for You endpoint with location + design/interior scoring.
+- Implement chatbot MVP (intent parser + FAQ + search handoff).
+
+### Week 5
+- Improve performance (caching, indexes, pagination).
+- Add audit logs and usage events for future monetization.
+- Add recommendation caching and ranking quality checks.
+- Add chatbot logging, analytics, and unresolved-intent review loop.
+
+### Week 6
+- QA, seed realistic Kenya data, and launch prep.
+- Track KPIs: verified listings, inquiry rate, report resolution time.
+
+## Monetization Activation Later (Phase 2)
+When ready, enable without major rewrites:
+- Featured listings (boost visibility)
+- Agent subscriptions (higher limits and analytics)
+- Pay-per-lead bundles
+- Partner referrals (moving, internet, insurance)
+
+Because plans, usage events, and organization state already exist, this becomes a feature rollout instead of a platform rewrite.
+
+## Final Pre-Build Checklist (Owner, Priority, Deadline)
+
+Use this as the execution tracker before and during MVP build.
+
+| # | Work Item | Priority | Owner | Target Date | Status |
+|---|---|---|---|---|---|
+| 1 | Confirm MVP scope freeze (must-have vs later) | P0 | Product Lead | 2026-03-22 | Not Started |
+| 2 | Define RBAC rules and object-level access matrix | P0 | Backend Lead | 2026-03-23 | Not Started |
+| 3 | Approve core data model (users, listings, organizations, events) | P0 | Backend Lead | 2026-03-24 | Not Started |
+| 4 | Draft API contracts for search, recommendations, chatbot, dashboards | P0 | Backend + Frontend Leads | 2026-03-25 | Not Started |
+| 5 | Setup environments (dev, staging) and secrets management | P0 | DevOps/Backend | 2026-03-25 | Not Started |
+| 6 | Configure CI pipeline (lint, tests, migration checks) | P0 | DevOps | 2026-03-26 | Not Started |
+| 7 | Implement authentication, role assignment, and route guards | P0 | Backend + Frontend | 2026-03-28 | Not Started |
+| 8 | Build listing CRUD with verification workflow | P0 | Backend + Admin Ops | 2026-03-31 | Not Started |
+| 9 | Build county-first search and filter UX for mobile | P0 | Frontend Lead | 2026-04-01 | Not Started |
+| 10 | Implement event tracking taxonomy (view, save, inquiry, chat intents) | P0 | Data/Backend | 2026-04-02 | Not Started |
+| 11 | Build Recommended for You endpoint with fallback logic | P1 | Backend Lead | 2026-04-04 | Not Started |
+| 12 | Implement chatbot MVP (FAQ + search intent parser + handoff) | P1 | Backend + Frontend | 2026-04-05 | Not Started |
+| 13 | Add moderation tools (report listing, review queue, action log) | P0 | Admin Ops + Backend | 2026-04-05 | Not Started |
+| 14 | Define verification SLA and fraud escalation playbook | P0 | Operations Lead | 2026-04-06 | Not Started |
+| 15 | Security baseline: admin MFA, rate limits, audit logs, backups | P0 | Backend + DevOps | 2026-04-07 | Not Started |
+| 16 | Legal baseline: Terms, Privacy, consent copy, data retention | P0 | Legal/Founder | 2026-04-07 | Not Started |
+| 17 | QA plan: permission tests, search tests, recommendation tests | P1 | QA Lead | 2026-04-08 | Not Started |
+| 18 | Seed launch inventory across major counties | P0 | Growth/Ops | 2026-04-09 | Not Started |
+| 19 | Launch analytics dashboard with MVP KPIs | P1 | Data/Founder | 2026-04-10 | Not Started |
+| 20 | Go-live checklist and rollback plan approval | P0 | Founder + Tech Lead | 2026-04-11 | Not Started |
+
+### MVP KPI Targets (First 30 Days)
+- Verified listing rate: 95%+ of published listings verified.
+- Inquiry conversion: at least 8% of listing views result in inquiry action.
+- Recommendation CTR: at least 12% CTR on recommended cards.
+- Fraud resolution: 90% of flagged listings reviewed within 24 hours.
+- Time to first inquiry: median less than 2 days after signup.
+
+### Definition of Ready (Build Start Gate)
+- RBAC matrix approved.
+- API contracts approved.
+- Legal policy drafts ready.
+- Staging and CI configured.
+- Priority county launch list approved.
+
