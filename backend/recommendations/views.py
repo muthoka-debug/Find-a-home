@@ -65,44 +65,72 @@ class RecommendedListingsView(APIView):
 
 	def get(self, request, *args, **kwargs):
 		user = request.user
+		from django.utils import timezone
 		
 		# 1. Base Queryset: Everything active and verified, exclude user's own listings
-		base_qs = Listing.objects.filter(is_active=True, is_verified=True).exclude(agent=user)
+		base_qs = Listing.objects.filter(is_active=True, is_verified=True).exclude(agent=user).prefetch_related('style_tags', 'amenities')
 		
 		# 2. Try to grab the user's preference profile
 		pref_profile = UserPreferenceProfile.objects.filter(user=user).first()
+		user_pref_styles = set(pref_profile.style_tags.values_list('id', flat=True)) if pref_profile else set()
 		
-		# 3. Grab recent county viewing history
-		viewed_counties = ListingViewEvent.objects.filter(user=user).values_list('county', flat=True).distinct()
+		# 3. Grab recent county viewing history and design affinities from viewing history
+		recent_views = ListingViewEvent.objects.filter(user=user).select_related('listing')
+		viewed_counties = set(recent_views.values_list('county', flat=True))
 		
-		# 4. Scoring Algorithm
+		# 4. Scoring Algorithm based on: Location (0.45), Design (0.30), Interior (0.20), Freshness (0.05)
 		scored_listings = []
+		now = timezone.now()
+		
 		for listing in base_qs:
-			score = 0
+			location_score = 0.0
+			design_score = 0.0
+			interior_score = 0.0
+			freshness_score = 0.0
 
-			# Boost based on explicit preferences
+			# Location Match (max 1.0)
+			if pref_profile and pref_profile.preferred_counties and listing.county in pref_profile.preferred_counties:
+				location_score = 1.0
+			elif listing.county in viewed_counties:
+				location_score = 0.8
+			
+			# Design Affinity (max 1.0) - based on style tags
+			listing_styles = set(listing.style_tags.values_list('id', flat=True))
+			if user_pref_styles and listing_styles:
+				intersection = len(user_pref_styles.intersection(listing_styles))
+				design_score = min(1.0, intersection / len(user_pref_styles))
+			
+			# Interior Affinity (max 1.0) - based on budget, bedrooms, furnishing
+			interior_factors = 0
+			interior_matches = 0
 			if pref_profile:
-				if pref_profile.preferred_counties and listing.county in pref_profile.preferred_counties:
-					score += 10
+				if pref_profile.budget_min or pref_profile.budget_max:
+					interior_factors += 1
+					if (not pref_profile.budget_min or listing.price >= pref_profile.budget_min) and \
+					   (not pref_profile.budget_max or listing.price <= pref_profile.budget_max):
+						interior_matches += 1
+						
+				if pref_profile.bedrooms:
+					interior_factors += 1
+					if listing.bedrooms == pref_profile.bedrooms:
+						interior_matches += 1
+						
+				if pref_profile.furnishing is not None:
+					interior_factors += 1
+					if listing.is_furnished == pref_profile.furnishing:
+						interior_matches += 1
+						
+			if interior_factors > 0:
+				interior_score = interior_matches / interior_factors
 				
-				# Budget matching
-				if pref_profile.budget_min and listing.price >= pref_profile.budget_min:
-					score += 5
-				if pref_profile.budget_max and listing.price <= pref_profile.budget_max:
-					score += 5
-				
-				# Attributes matching
-				if pref_profile.bedrooms and listing.bedrooms == pref_profile.bedrooms:
-					score += 5
-				
-				if pref_profile.furnishing is not None and listing.is_furnished == pref_profile.furnishing:
-					score += 3
+			# Freshness (max 1.0) - decays over 30 days
+			days_old = (now - listing.created_at).days
+			freshness_score = max(0.0, 1.0 - (days_old / 30.0))
 			
-			# Boost based on implicit (viewing) history
-			if listing.county in viewed_counties:
-				score += 2
+			# Final Weighted Score
+			final_score = (0.45 * location_score) + (0.30 * design_score) + (0.20 * interior_score) + (0.05 * freshness_score)
 			
-			scored_listings.append((score, listing))
+			scored_listings.append((final_score, listing))
 			
 		# 5. Sort strictly by descending score, then by newest listing
 		scored_listings.sort(key=lambda x: (x[0], x[1].created_at.timestamp()), reverse=True)
