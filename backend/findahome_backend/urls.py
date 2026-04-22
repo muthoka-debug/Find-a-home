@@ -24,5 +24,6 @@ urlpatterns = [
     path('api/auth/google/', include('allauth.socialaccount.providers.google.urls')),
     path('api/', include('listings.urls')),
     path('api/', include('recommendations.urls')),
+    path('api/chat/', include('chatbot.urls')),
 ]
 
