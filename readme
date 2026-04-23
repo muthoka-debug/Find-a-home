@@ -32,35 +32,35 @@ FindAHome solves the "fake listing" problem in Kenya by creating a verified mark
 We will launch with user value first (trusted listings, fast search, verification) and keep monetization paths open behind the scenes.
 
 ### MVP Scope (Phase 1)
-- Public property browsing with county, price, and amenities filters.
-- Agent and landlord onboarding with admin verification workflow.
-- **Authentication**: Email/Password signup + **Google Social Login** for fast onboarding.
-- Property management dashboard for verified agents.
-- WhatsApp contact flow for fast inquiry conversion.
-- Fraud reporting and listing moderation queue.
-- **Recommended for You** feed using location, design style, and interior preferences.
-- **FindAHome Chatbot** for guided search, FAQs, and support routing.
+- [Implemented] Public property browsing with county, price, and amenities filters.
+- [Implemented] Agent and landlord onboarding with admin verification workflow.
+- [Partial] **Authentication**: Email/Password signup + **Google Social Login** for fast onboarding.
+- [Planned] Property management dashboard for verified agents.
+- [Partial] WhatsApp contact flow for fast inquiry conversion.
+- [Implemented] Fraud reporting and listing moderation queue.
+- [Implemented] **Recommended for You** feed using location, design style, and interior preferences.
+- [Implemented] **FindAHome Chatbot** for guided search, FAQs, and support routing.
 
 ### Architecture Decisions That Keep Monetization Open
-- **Multi-role accounts now**: `house_hunter`, `agent`, `landlord`, `admin`.
-- **Organization model now**: agents/landlords can later upgrade to paid tiers without changing identity tables.
-- **Feature flags now**: gate premium capabilities without rewiring frontend routes.
-- **Event logging now**: store actions (`listing_created`, `lead_sent`, `listing_boost_click`) to support future billing and analytics.
-- **Soft limits now**: enforce free-tier caps via config so paid limits can be activated later.
+- [Implemented] **Multi-role accounts now**: `house_hunter`, `agent`, `landlord`, `admin`.
+- [Planned] **Organization model now**: agents/landlords can later upgrade to paid tiers without changing identity tables.
+- [Planned] **Feature flags now**: gate premium capabilities without rewiring frontend routes.
+- [Partial] **Event logging now**: store actions (`listing_created`, `lead_sent`, `listing_boost_click`) to support future billing and analytics.
+- [Planned] **Soft limits now**: enforce free-tier caps via config so paid limits can be activated later.
 
 ### Data Model Additions To Include From Day 1 (Not Yet Charged)
-- `organizations` (owner, name, verification status)
-- `organization_members` (roles and permissions)
-- `plans` (free/pro/business definitions)
-- `organization_plan_state` (active plan, quotas, renewal metadata)
-- `usage_events` (meterable actions per organization)
+- [Planned] `organizations` (owner, name, verification status)
+- [Planned] `organization_members` (roles and permissions)
+- [Planned] `plans` (free/pro/business definitions)
+- [Planned] `organization_plan_state` (active plan, quotas, renewal metadata)
+- [Planned] `usage_events` (meterable actions per organization)
 
 ### Personalization Data Model (For Recommendations)
-- `user_preference_profile` (preferred counties, budget bands, bedrooms, furnishing, style tags)
-- `listing_style_tags` (design and interior tags such as `modern`, `minimal`, `open_kitchen`, `scandinavian`)
-- `listing_view_events` (user, listing, county, viewed_at, dwell_time)
-- `listing_save_events` (saved/shortlisted listings)
-- `recommendation_impressions` (what was recommended, rank, clicked/not clicked)
+- [Implemented] `user_preference_profile` (preferred counties, budget bands, bedrooms, furnishing, style tags)
+- [Implemented] `listing_style_tags` (design and interior tags such as `modern`, `minimal`, `open_kitchen`, `scandinavian`)
+- [Implemented] `listing_view_events` (user, listing, county, viewed_at, dwell_time)
+- [Implemented] `listing_save_events` (saved/shortlisted listings)
+- [Implemented] `recommendation_impressions` (what was recommended, rank, clicked/not clicked)
 
 These tables can stay on `free` for all users until monetization is enabled.
 
@@ -72,28 +72,49 @@ Show each user homes they are most likely to like based on:
 - **Most visited house designs**: bungalow, maisonette, apartment, studio, bedsitter, etc.
 - **Interior preferences**: style tags and features like open kitchen, tiled floors, modern finish, furnished.
 
-### Ranking Strategy (Simple First, Better Over Time)
-Use a weighted score per listing:
+### Data Inputs
+- `user_preference_profile`: preferred counties, budget range, bedroom count, furnishing, and style tags.
+- `listing_view_events`: used to learn repeated county interest and dwell time signals.
+- `listing_save_events`: used to boost houses the user shortlists.
+- `listing_style_tags`: used to measure design and interior affinity.
+- `recommendation_impressions`: used to log what was shown and whether the user clicked it.
+
+### Ranking Model
+We score each verified listing with a simple weighted formula:
 
 $$
 Score = 0.45(LocationMatch) + 0.30(DesignAffinity) + 0.20(InteriorAffinity) + 0.05(Freshness)
 $$
 
 - `LocationMatch`: same county or nearby county boost.
-- `DesignAffinity`: based on house types the user views/saves most.
-- `InteriorAffinity`: based on style tags from viewed/saved listings.
-- `Freshness`: favor recently verified listings.
+- `DesignAffinity`: overlap between style tags and house-design behavior (`property_type`) from views/saves.
+- `InteriorAffinity`: budget, bedrooms, and furnishing fit.
+- `Freshness`: recently verified listings rank slightly higher.
 
-### Budget-Friendly Implementation
-- Start with nightly batch recommendations (no expensive real-time ML).
-- Use PostgreSQL queries/materialized views for affinity scores.
-- Cache top recommendations per user for fast mobile loading.
-- Fall back to "popular in your county" if user history is limited.
+Status: [Implemented] in backend endpoint `GET /api/recommended-listings/`.
+
+### API Flow
+- `GET /api/recommended-listings/` returns ranked listings plus impression IDs for click tracking.
+- `POST /api/user-preferences/` and `PATCH /api/user-preferences/{id}/` save the preference profile.
+- `POST /api/listing-view-events/` records listing views.
+- `POST /api/listing-save-events/` records shortlist actions.
+- `PATCH /api/recommendation-impressions/{id}/` marks a recommended card as clicked.
+
+### Frontend Flow
+- The Recommendations page loads the ranked feed from the backend API.
+- The Search page records views and shortlist actions from listing cards.
+- The Preferences page lets users set counties, budget bands, bedrooms, furnishing, and style tags.
 
 ### Cold Start Rules
-- New users: ask 3 quick picks (county, budget range, preferred home type).
-- No interactions yet: show trending verified listings by county.
-- Sparse counties: blend nearby county inventory to avoid empty feeds.
+- New users see verified, trending homes in their selected or most active counties.
+- If preference history is sparse, county and freshness signals carry more weight.
+- If there is no saved preference profile yet, the UI encourages the user to complete it.
+
+### Budget-Friendly Implementation
+- Current MVP: request-time weighted scoring using preference profile + behavioral events.
+- Planned optimization: nightly batch recommendations and materialized affinity views.
+- Planned optimization: cache top recommendations per user for fast mobile loading.
+- Current fallback: if user history is sparse, county and freshness signals dominate.
 
 ### Success Metrics
 - Recommendation click-through rate (CTR).
@@ -188,18 +209,18 @@ Hide/show UI is not security. Enforce permissions on API too:
 The chatbot should respect the same RBAC rules as the UI and API. It must never reveal private data outside role scope.
 
 ### Budget-Friendly Architecture
-- Phase 1: retrieval + rules-based assistant (lowest cost).
+- [Implemented] Phase 1: retrieval + rules-based assistant (lowest cost).
   - FAQ knowledge base from product policies/help articles.
   - Structured search query parser for listing intents (county, budget, bedrooms, features).
-- Phase 2: add LLM for richer conversation once usage grows.
-- Cache repeated FAQ responses and top intent results.
-- Add strict token and request limits per user/session.
+- [Planned] Phase 2: add LLM for richer conversation once usage grows.
+- [Planned] Cache repeated FAQ responses and top intent results.
+- [Partial] Add strict token and request limits per user/session.
 
 ### Chatbot Data and Logging
-- `chat_sessions` (user, role, started_at, channel)
-- `chat_messages` (session, sender, intent, text, response_time_ms)
-- `chat_intent_events` (parsed intent fields: county, budget, bedrooms, amenities)
-- `chat_handoff_events` (escalated_to_human, reason)
+- [Implemented] `chat_sessions` (user, role, started_at, channel)
+- [Implemented] `chat_messages` (session, sender, intent, text, response_time_ms)
+- [Implemented] `chat_intent_events` (parsed intent fields: county, budget, bedrooms, amenities)
+- [Partial] `chat_handoff_events` (escalated_to_human, reason)
 
 ### Safety and Quality Controls
 - Do not provide legal/financial guarantees.
@@ -259,26 +280,26 @@ Use this as the execution tracker before and during MVP build.
 
 | # | Work Item | Priority | Owner | Target Date | Status |
 |---|---|---|---|---|---|
-| 1 | Confirm MVP scope freeze (must-have vs later) | P0 | Product Lead | 2026-03-22 | Not Started |
-| 2 | Define RBAC rules and object-level access matrix | P0 | Backend Lead | 2026-03-23 | Not Started |
-| 3 | Approve core data model (users, listings, organizations, events) | P0 | Backend Lead | 2026-03-24 | Not Started |
-| 4 | Draft API contracts for search, recommendations, chatbot, dashboards | P0 | Backend + Frontend Leads | 2026-03-25 | Not Started |
-| 5 | Setup environments (dev, staging) and secrets management | P0 | DevOps/Backend | 2026-03-25 | Not Started |
-| 6 | Configure CI pipeline (lint, tests, migration checks) | P0 | DevOps | 2026-03-26 | Not Started |
-| 7 | Implement authentication, role assignment, and route guards | P0 | Backend + Frontend | 2026-03-28 | Not Started |
-| 8 | Build listing CRUD with verification workflow | P0 | Backend + Admin Ops | 2026-03-31 | Not Started |
-| 9 | Build county-first search and filter UX for mobile | P0 | Frontend Lead | 2026-04-01 | Not Started |
-| 10 | Implement event tracking taxonomy (view, save, inquiry, chat intents) | P0 | Data/Backend | 2026-04-02 | Not Started |
-| 11 | Build Recommended for You endpoint with fallback logic | P1 | Backend Lead | 2026-04-04 | Not Started |
-| 12 | Implement chatbot MVP (FAQ + search intent parser + handoff) | P1 | Backend + Frontend | 2026-04-05 | Not Started |
-| 13 | Add moderation tools (report listing, review queue, action log) | P0 | Admin Ops + Backend | 2026-04-05 | Not Started |
-| 14 | Define verification SLA and fraud escalation playbook | P0 | Operations Lead | 2026-04-06 | Not Started |
-| 15 | Security baseline: admin MFA, rate limits, audit logs, backups | P0 | Backend + DevOps | 2026-04-07 | Not Started |
-| 16 | Legal baseline: Terms, Privacy, consent copy, data retention | P0 | Legal/Founder | 2026-04-07 | Not Started |
-| 17 | QA plan: permission tests, search tests, recommendation tests | P1 | QA Lead | 2026-04-08 | Not Started |
-| 18 | Seed launch inventory across major counties | P0 | Growth/Ops | 2026-04-09 | Not Started |
-| 19 | Launch analytics dashboard with MVP KPIs | P1 | Data/Founder | 2026-04-10 | Not Started |
-| 20 | Go-live checklist and rollback plan approval | P0 | Founder + Tech Lead | 2026-04-11 | Not Started |
+| 1 | Confirm MVP scope freeze (must-have vs later) | P0 | Product Lead | 2026-03-22 | Partial |
+| 2 | Define RBAC rules and object-level access matrix | P0 | Backend Lead | 2026-03-23 | Partial |
+| 3 | Approve core data model (users, listings, organizations, events) | P0 | Backend Lead | 2026-03-24 | Partial |
+| 4 | Draft API contracts for search, recommendations, chatbot, dashboards | P0 | Backend + Frontend Leads | 2026-03-25 | Partial |
+| 5 | Setup environments (dev, staging) and secrets management | P0 | DevOps/Backend | 2026-03-25 | Partial |
+| 6 | Configure CI pipeline (lint, tests, migration checks) | P0 | DevOps | 2026-03-26 | Planned |
+| 7 | Implement authentication, role assignment, and route guards | P0 | Backend + Frontend | 2026-03-28 | Partial |
+| 8 | Build listing CRUD with verification workflow | P0 | Backend + Admin Ops | 2026-03-31 | Implemented |
+| 9 | Build county-first search and filter UX for mobile | P0 | Frontend Lead | 2026-04-01 | Partial |
+| 10 | Implement event tracking taxonomy (view, save, inquiry, chat intents) | P0 | Data/Backend | 2026-04-02 | Partial |
+| 11 | Build Recommended for You endpoint with fallback logic | P1 | Backend Lead | 2026-04-04 | Implemented |
+| 12 | Implement chatbot MVP (FAQ + search intent parser + handoff) | P1 | Backend + Frontend | 2026-04-05 | Implemented |
+| 13 | Add moderation tools (report listing, review queue, action log) | P0 | Admin Ops + Backend | 2026-04-05 | Partial |
+| 14 | Define verification SLA and fraud escalation playbook | P0 | Operations Lead | 2026-04-06 | Planned |
+| 15 | Security baseline: admin MFA, rate limits, audit logs, backups | P0 | Backend + DevOps | 2026-04-07 | Partial |
+| 16 | Legal baseline: Terms, Privacy, consent copy, data retention | P0 | Legal/Founder | 2026-04-07 | Planned |
+| 17 | QA plan: permission tests, search tests, recommendation tests | P1 | QA Lead | 2026-04-08 | Planned |
+| 18 | Seed launch inventory across major counties | P0 | Growth/Ops | 2026-04-09 | Planned |
+| 19 | Launch analytics dashboard with MVP KPIs | P1 | Data/Founder | 2026-04-10 | Planned |
+| 20 | Go-live checklist and rollback plan approval | P0 | Founder + Tech Lead | 2026-04-11 | Planned |
 
 ### MVP KPI Targets (First 30 Days)
 - Verified listing rate: 95%+ of published listings verified.

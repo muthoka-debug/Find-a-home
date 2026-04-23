@@ -2,6 +2,7 @@ from rest_framework import viewsets, permissions, status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from django.db.models import Q
+from collections import Counter
 from listings.models import Listing
 from listings.serializers import ListingSerializer
 
@@ -11,6 +12,7 @@ from .serializers import (
 	ListingViewEventSerializer,
 	ListingSaveEventSerializer,
 	RecommendationImpressionSerializer,
+	RecommendationResultSerializer,
 )
 from .permissions import IsOwnerOrAdmin
 
@@ -23,6 +25,9 @@ class UserPreferenceProfileViewSet(viewsets.ModelViewSet):
 			return UserPreferenceProfile.objects.all()
 		return UserPreferenceProfile.objects.filter(user=self.request.user)
 
+	def perform_create(self, serializer):
+		serializer.save(user=self.request.user)
+
 class ListingViewEventViewSet(viewsets.ModelViewSet):
 	serializer_class = ListingViewEventSerializer
 	permission_classes = [permissions.IsAuthenticated, IsOwnerOrAdmin]
@@ -33,6 +38,9 @@ class ListingViewEventViewSet(viewsets.ModelViewSet):
 		if self.request.user.role in ['LANDLORD', 'AGENT']:
 			return ListingViewEvent.objects.filter(Q(listing__agent=self.request.user) | Q(user=self.request.user))
 		return ListingViewEvent.objects.filter(user=self.request.user)
+
+	def perform_create(self, serializer):
+		serializer.save(user=self.request.user)
 
 class ListingSaveEventViewSet(viewsets.ModelViewSet):
 	serializer_class = ListingSaveEventSerializer
@@ -45,6 +53,9 @@ class ListingSaveEventViewSet(viewsets.ModelViewSet):
 			return ListingSaveEvent.objects.filter(Q(listing__agent=self.request.user) | Q(user=self.request.user))
 		return ListingSaveEvent.objects.filter(user=self.request.user)
 
+	def perform_create(self, serializer):
+		serializer.save(user=self.request.user)
+
 class RecommendationImpressionViewSet(viewsets.ModelViewSet):
 	serializer_class = RecommendationImpressionSerializer
 	permission_classes = [permissions.IsAuthenticated, IsOwnerOrAdmin]
@@ -56,12 +67,32 @@ class RecommendationImpressionViewSet(viewsets.ModelViewSet):
 			return RecommendationImpression.objects.filter(Q(listing__agent=self.request.user) | Q(user=self.request.user))
 		return RecommendationImpression.objects.filter(user=self.request.user)
 
+	def perform_update(self, serializer):
+		# Allow owner/admin to update clicked state without changing ownership fields.
+		serializer.save()
+
 class RecommendedListingsView(APIView):
 	"""
 	API endpoint that returns custom listing recommendations for the authenticated user
 	based on their UserPreferenceProfile and viewing history.
 	"""
 	permission_classes = [permissions.IsAuthenticated]
+
+	# Lightweight county-neighborhood map for Kenya-focused location intent fallback.
+	NEARBY_COUNTIES = {
+		"Nairobi": {"Kiambu", "Machakos", "Kajiado"},
+		"Kiambu": {"Nairobi", "Muranga", "Nyandarua"},
+		"Machakos": {"Nairobi", "Makueni", "Kajiado"},
+		"Kajiado": {"Nairobi", "Machakos"},
+		"Mombasa": {"Kwale", "Kilifi"},
+		"Nakuru": {"Baringo", "Narok", "Nyandarua"},
+	}
+
+	def _nearby_counties_for(self, counties):
+		nearby = set()
+		for county in counties:
+			nearby.update(self.NEARBY_COUNTIES.get(county, set()))
+		return nearby
 
 	def get(self, request, *args, **kwargs):
 		user = request.user
@@ -70,13 +101,33 @@ class RecommendedListingsView(APIView):
 		# 1. Base Queryset: Everything active and verified, exclude user's own listings
 		base_qs = Listing.objects.filter(is_active=True, is_verified=True).exclude(agent=user).prefetch_related('style_tags', 'amenities')
 		
-		# 2. Try to grab the user's preference profile
+		# 2. Try to grab the user's preference profile.
 		pref_profile = UserPreferenceProfile.objects.filter(user=user).first()
 		user_pref_styles = set(pref_profile.style_tags.values_list('id', flat=True)) if pref_profile else set()
+		preferred_counties = set(pref_profile.preferred_counties) if pref_profile and pref_profile.preferred_counties else set()
 		
-		# 3. Grab recent county viewing history and design affinities from viewing history
+		# 3. Grab behavioral history from views and saves.
 		recent_views = ListingViewEvent.objects.filter(user=user).select_related('listing')
+		recent_saves = ListingSaveEvent.objects.filter(user=user).select_related('listing')
+
 		viewed_counties = set(recent_views.values_list('county', flat=True))
+		saved_counties = set(recent_saves.values_list('listing__county', flat=True))
+		interest_counties = preferred_counties.union(viewed_counties).union(saved_counties)
+		nearby_interest_counties = self._nearby_counties_for(interest_counties)
+
+		viewed_property_types = Counter(recent_views.values_list('listing__property_type', flat=True))
+		saved_property_types = Counter(recent_saves.values_list('listing__property_type', flat=True))
+		saved_property_types_weighted = Counter(
+			{k: v * 2 for k, v in saved_property_types.items()}
+		)
+		property_type_affinity = viewed_property_types + saved_property_types_weighted
+		affinity_total = sum(property_type_affinity.values())
+
+		saved_style_ids = set(
+			recent_saves.values_list('listing__style_tags__id', flat=True)
+		)
+		saved_style_ids.discard(None)
+		all_style_affinities = user_pref_styles.union(saved_style_ids)
 		
 		# 4. Scoring Algorithm based on: Location (0.45), Design (0.30), Interior (0.20), Freshness (0.05)
 		scored_listings = []
@@ -89,16 +140,26 @@ class RecommendedListingsView(APIView):
 			freshness_score = 0.0
 
 			# Location Match (max 1.0)
-			if pref_profile and pref_profile.preferred_counties and listing.county in pref_profile.preferred_counties:
+			if listing.county in preferred_counties:
 				location_score = 1.0
-			elif listing.county in viewed_counties:
-				location_score = 0.8
+			elif listing.county in viewed_counties or listing.county in saved_counties:
+				location_score = 0.85
+			elif listing.county in nearby_interest_counties:
+				location_score = 0.6
 			
-			# Design Affinity (max 1.0) - based on style tags
+			# Design Affinity (max 1.0) - based on style tags + property type behavior.
 			listing_styles = set(listing.style_tags.values_list('id', flat=True))
-			if user_pref_styles and listing_styles:
-				intersection = len(user_pref_styles.intersection(listing_styles))
-				design_score = min(1.0, intersection / len(user_pref_styles))
+			style_component = 0.0
+			type_component = 0.0
+
+			if all_style_affinities and listing_styles:
+				intersection = len(all_style_affinities.intersection(listing_styles))
+				style_component = min(1.0, intersection / len(all_style_affinities))
+
+			if affinity_total > 0 and listing.property_type in property_type_affinity:
+				type_component = min(1.0, property_type_affinity[listing.property_type] / affinity_total)
+
+			design_score = min(1.0, (0.7 * style_component) + (0.3 * type_component))
 			
 			# Interior Affinity (max 1.0) - based on budget, bedrooms, furnishing
 			interior_factors = 0
@@ -136,14 +197,21 @@ class RecommendedListingsView(APIView):
 		scored_listings.sort(key=lambda x: (x[0], x[1].created_at.timestamp()), reverse=True)
 		top_listings = [item[1] for item in scored_listings[:10]] # limit to 10 for now
 		
-		# 6. Log recommendation impression
-		for index, listing in enumerate(top_listings):
-			RecommendationImpression.objects.create(
+		# 6. Log recommendation impression and return IDs for click tracking.
+		response_items = []
+		for index, (score, listing) in enumerate(scored_listings[:10]):
+			impression = RecommendationImpression.objects.create(
 				user=user,
 				listing=listing,
 				rank=index + 1
 			)
-		
+			response_items.append({
+				"impression_id": impression.id,
+				"rank": impression.rank,
+				"score": round(score, 4),
+				"listing": listing,
+			})
+
 		# 7. Serialize and return
-		serializer = ListingSerializer(top_listings, many=True)
+		serializer = RecommendationResultSerializer(response_items, many=True)
 		return Response(serializer.data, status=status.HTTP_200_OK)

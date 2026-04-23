@@ -1,0 +1,17 @@
+{
+  "name": "findahome-workspace",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "backend:run": "python manage.py runserver",
+    "backend:migrate": "python manage.py migrate",
+    "backend:makemigrations": "python manage.py makemigrations",
+    "backend:check": "python manage.py check",
+    "backend:test": "python manage.py test",
+    "frontend:install": "npm --prefix frontend install",
+    "frontend:dev": "npm --prefix frontend run dev",
+    "frontend:build": "npm --prefix frontend run build",
+    "frontend:start": "npm --prefix frontend run start",
+    "frontend:lint": "npm --prefix frontend run lint"
+  }
+}

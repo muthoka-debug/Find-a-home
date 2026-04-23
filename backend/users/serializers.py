@@ -33,7 +33,10 @@ class CustomRegisterSerializer(RegisterSerializer):
 class CustomLoginSerializer(LoginSerializer):
     def validate(self, attrs):
         data = super().validate(attrs)
-        user = self.user
+        user = getattr(self, 'user', None) or data.get('user')
+
+        if user is None:
+            raise serializers.ValidationError("Unable to resolve authenticated user during login.")
         
         # Block login if agent or landlord is unverified
         if user.role in [User.Role.LANDLORD, User.Role.AGENT] and not user.is_verified:
