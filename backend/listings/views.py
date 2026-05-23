@@ -12,17 +12,30 @@ class ListingViewSet(viewsets.ModelViewSet):
 
 	def get_queryset(self):
 		user = self.request.user
+		queryset = Listing.objects.all().order_by('-created_at')
 		
 		# If the query includes ?my_listings=true and user is authenticated Landlord/Agent
 		if self.request.query_params.get('my_listings') == 'true' and user.is_authenticated:
-			return Listing.objects.filter(agent=user).order_by('-created_at')
+			queryset = Listing.objects.filter(agent=user).order_by('-created_at')
+		else:
+			# Public feed: only verified and active listings
+			if not (user.is_authenticated and user.role == 'ADMIN'):
+				queryset = Listing.objects.filter(is_verified=True, is_active=True).order_by('-created_at')
 
-		# Admin sees everything by default
-		if user.is_authenticated and user.role == 'ADMIN':
-			return Listing.objects.all().order_by('-created_at')
-		
-		# Public feed: only verified and active listings
-		return Listing.objects.filter(is_verified=True, is_active=True).order_by('-created_at')
+		location = self.request.query_params.get('location', '').strip()
+		if location:
+			queryset = queryset.filter(Q(county__icontains=location) | Q(location__icontains=location))
+
+		query = self.request.query_params.get('q', '').strip()
+		if query:
+			queryset = queryset.filter(
+				Q(title__icontains=query)
+				| Q(description__icontains=query)
+				| Q(county__icontains=query)
+				| Q(location__icontains=query)
+			)
+
+		return queryset
 
 	def perform_create(self, serializer):
 		# Automatically set the agent to the logged-in user
