@@ -14,7 +14,7 @@ export function Header() {
               <Home className="w-6 h-6 text-black" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-white">GoldNest</h1>
+              <h1 className="text-2xl font-bold text-white"> Find a home</h1>
               <p className="text-xs text-yellow-600">Verified House Hunting</p>
             </div>
           </Link>

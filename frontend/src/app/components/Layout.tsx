@@ -12,7 +12,7 @@ export function Layout() {
         <div className="container mx-auto px-6 py-8">
           <div className="text-center text-zinc-400 text-sm">
             <p className="mb-2">
-              © 2026 GoldNest. All listings are manually verified to prevent scams.
+              © 2026 Find a home. All listings are manually verified to prevent scams.
             </p>
             <p className="text-yellow-600">
               Your trusted partner in finding the perfect home.

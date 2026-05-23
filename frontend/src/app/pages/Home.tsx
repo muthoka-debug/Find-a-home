@@ -103,7 +103,7 @@ export function Home() {
         {/* Features Section */}
         <div className="mt-16">
           <h2 className="text-2xl font-bold text-white mb-6 text-center">
-            Why Choose GoldNest?
+            Why Choose Find a Home?
           </h2>
           <Features />
         </div>
